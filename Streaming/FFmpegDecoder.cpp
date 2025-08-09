@@ -86,6 +86,10 @@ namespace moonlight_xbox_dx {
 			decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC);
 			Utils::Log("Using HEVC\n");
 		}
+		else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+			decoder = avcodec_find_decoder(AV_CODEC_ID_AV1);
+			Utils::Log("Using AV1\n");
+		}
 
 		if (decoder == NULL) {
 			Utils::Log("Couldn't find decoder\n");

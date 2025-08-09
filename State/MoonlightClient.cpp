@@ -232,6 +232,9 @@ int MoonlightClient::StartStreaming(std::shared_ptr<DX::DeviceResources> res, St
 	if (!isXboxOne) {
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265;
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
+		// Add AV1 support for newer Xbox consoles
+		config.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN8;
+		config.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN10;
 	}
 
 	config.audioConfiguration = AUDIO_CONFIGURATION_STEREO;
