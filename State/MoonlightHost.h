@@ -19,7 +19,7 @@ namespace moonlight_xbox_dx {
         bool playAudioOnPC = false;
         MoonlightClient* client;
         int currentlyRunningAppId;
-        int bitrate = 20000;
+        int bitrate = 20000; // Default 20 Mbps, supports up to 500 Mbps (500000 kbps)
         ScreenResolution^ resolution;
         int fps = 60;
         int autostartID = -1;
@@ -164,6 +164,9 @@ namespace moonlight_xbox_dx {
         {
             int get() { return this->bitrate; }
             void set(int value) {
+                // Validate bitrate range: 5 Mbps to 500 Mbps for high-bitrate streaming support
+                if (value < 5000) value = 5000;        // Minimum 5 Mbps
+                if (value > 500000) value = 500000;    // Maximum 500 Mbps
                 this->bitrate = value;
                 OnPropertyChanged("Bitrate");
             }

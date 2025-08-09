@@ -39,9 +39,9 @@ public:
 	 * The window is divided into buckets of fixed duration (bucketIntervalMs).
 	 *
 	 * @param windowSeconds The duration of the tracking window in seconds. Default is 10 seconds.
-	 * @param bucketIntervalMs The interval for each bucket in milliseconds. Default is 250 ms.
+	 * @param bucketIntervalMs The interval for each bucket in milliseconds. Default is 100 ms (optimized for high-bitrate).
 	 */
-	BandwidthTracker(std::uint32_t windowSeconds = 10, std::uint32_t bucketIntervalMs = 250);
+	BandwidthTracker(std::uint32_t windowSeconds = 10, std::uint32_t bucketIntervalMs = 100);
 
 	/**
 	 * @brief Record bytes that were received or sent.
