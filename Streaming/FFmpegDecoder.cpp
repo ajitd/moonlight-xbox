@@ -16,7 +16,7 @@ extern "C" {
 #include <libavutil/hwcontext_d3d11va.h>
 #include <libavutil/time.h>
 }
-#define DECODER_BUFFER_SIZE 1048576
+#define DECODER_BUFFER_SIZE 16777216  // Increased from 1MB to 16MB for high-bitrate support
 
 namespace moonlight_xbox_dx {
 
@@ -130,13 +130,17 @@ namespace moonlight_xbox_dx {
 			Utils::Log(msg);
 			return err;
 		}
-		ffmpeg_buffer = (unsigned char*)malloc(DECODER_BUFFER_SIZE + AV_INPUT_BUFFER_PADDING_SIZE);
+		// Allocate aligned buffer for better memory performance with high-bitrate streams
+		ffmpeg_buffer = (unsigned char*)_aligned_malloc(DECODER_BUFFER_SIZE + AV_INPUT_BUFFER_PADDING_SIZE, 32);
 		if (ffmpeg_buffer == NULL) {
-			Utils::Log("OOM\n");
+			Utils::Log("OOM - Failed to allocate aligned decoder buffer\n");
 			Cleanup();
 			return -1;
 		}
-		int buffer_count = 2;
+		// Initialize padding for safety
+		memset(ffmpeg_buffer + DECODER_BUFFER_SIZE, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+		// Increase buffer count for high-bitrate streaming to prevent frame drops
+		int buffer_count = 8;  // Increased from 2 to 8 for better buffering
 		dec_frames_cnt = buffer_count;
 		dec_frames = (AVFrame**)malloc(buffer_count * sizeof(AVFrame*));
 		ready_frames = (AVFrame**)malloc(buffer_count * sizeof(AVFrame*));
@@ -188,7 +192,7 @@ namespace moonlight_xbox_dx {
 		avcodec_close(decoder_ctx);
 		avcodec_free_context(&decoder_ctx);
 		if (ffmpeg_buffer != NULL) {
-			free(ffmpeg_buffer);
+			_aligned_free(ffmpeg_buffer);  // Use aligned free for aligned malloc
 			ffmpeg_buffer = NULL;
 		}
 		if (ready_frames != NULL) {
@@ -204,11 +208,22 @@ namespace moonlight_xbox_dx {
 		bool status = LiWaitForNextVideoFrame(&frameHandle, &decodeUnit);
 		if (status == false)return false;
 		int n = LiGetPendingVideoFrames();
+		
+		// Enhanced buffer check for high-bitrate streaming
 		if (decodeUnit->fullLength > DECODER_BUFFER_SIZE) {
-			Utils::Log("(0) Decoder Buffer Size reached\n");
+			Utils::Log("Decoder Buffer Size exceeded: %d > %d bytes. Consider lowering bitrate.\n", 
+					   decodeUnit->fullLength, DECODER_BUFFER_SIZE);
 			LiCompleteVideoFrame(frameHandle, DR_NEED_IDR);
 			return false;
 		}
+		
+		// Priority handling for high-bitrate: skip frames if too many are pending
+		if (n > 6) {  // Drop frames if too many are pending to prevent buffer overflow
+			Utils::Log("Dropping frame due to high pending count: %d\n", n);
+			LiCompleteVideoFrame(frameHandle, DR_OK);
+			return false;
+		}
+		
 		PLENTRY entry = decodeUnit->bufferList;
 		uint32_t length = 0;
 		while (entry != NULL) {

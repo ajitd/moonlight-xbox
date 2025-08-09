@@ -227,7 +227,7 @@ int MoonlightClient::StartStreaming(std::shared_ptr<DX::DeviceResources> res, St
 	config.colorSpace = COLORSPACE_REC_601;
 	config.encryptionFlags = 0;
 	config.fps = sConfig->FPS;
-	config.packetSize = 1024;
+	config.packetSize = 4096;  // Increased from 1024 to 4096 for high-bitrate efficiency
 	config.supportedVideoFormats = VIDEO_FORMAT_H264;
 	if (!isXboxOne) {
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265;

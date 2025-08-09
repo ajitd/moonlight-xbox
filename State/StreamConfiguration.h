@@ -18,6 +18,7 @@ namespace moonlight_xbox_dx
 		property bool enableVsync;
 		property bool enableSOPS;
 		property bool forceTearing;
+		property int bufferSize;  // Added buffer size configuration for high-bitrate streaming
 	};
 
 	moonlight_xbox_dx::StreamConfiguration^ GetStreamConfig();

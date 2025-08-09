@@ -10,7 +10,7 @@ extern "C" {
 	#include <libavutil/hwcontext_d3d11va.h>
 }
 
-#define MAX_BUFFER 1024 * 1024
+#define MAX_BUFFER 16 * 1024 * 1024  // Increased from 1MB to 16MB for high-bitrate streams
 
 namespace moonlight_xbox_dx
 {

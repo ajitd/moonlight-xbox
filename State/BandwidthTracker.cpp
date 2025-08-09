@@ -8,7 +8,7 @@ BandwidthTracker::BandwidthTracker(uint32_t windowSeconds, uint32_t bucketInterv
     bucketIntervalMs(bucketIntervalMs)
 {
     if (bucketIntervalMs <= 0) {
-        bucketIntervalMs = 250;
+        bucketIntervalMs = 100;  // Reduced default for high-bitrate streaming
     }
     bucketCount = (windowSeconds * 1000) / bucketIntervalMs;
     buckets.resize(bucketCount);
