@@ -1,7 +1,10 @@
 ﻿#pragma once
 
 #include "Common\StepTimer.h"
+#include "Common\DeviceResourcesD3D12.h"
+#include "Common\XboxHardwareDetection.h"
 #include "Streaming\VideoRenderer.h"
+#include "Streaming\VideoRendererD3D12.h"
 #include "Streaming\LogRenderer.h"
 #include "Streaming\StatsRenderer.h"
 #include "Pages\StreamPage.xaml.h"
@@ -34,6 +37,10 @@ namespace moonlight_xbox_dx
 		void SendWinAltB();
 		void SetShowLogs(bool showLogs);
 		void SetShowStats(bool showStats);
+		// Enhanced Xbox Series X support
+		void EnableXboxSeriesXOptimizations();
+		bool IsUsingDirectX12Ultimate() const { return m_usingD3D12Ultimate; }
+
 	private:
 		void ProcessInput();
 		void Update();
@@ -42,12 +49,18 @@ namespace moonlight_xbox_dx
 
 		// Cached pointer to device resources.
 		std::shared_ptr<DX::DeviceResources> m_deviceResources;
+		std::shared_ptr<DX::DeviceResourcesD3D12> m_deviceResourcesD3D12;
 
 		std::unique_ptr<VideoRenderer> m_sceneRenderer;
+		std::unique_ptr<VideoRendererD3D12> m_sceneRendererD3D12;
 		std::unique_ptr<LogRenderer>   m_LogRenderer;
 		std::unique_ptr<StatsRenderer> m_statsTextRenderer;
 
 		std::shared_ptr<Stats>         m_stats;
+
+		// Xbox hardware detection
+		const XboxHardwareDetection& m_xboxHardware;
+		bool m_usingD3D12Ultimate;
 
 		Windows::Foundation::IAsyncAction^ m_renderLoopWorker;
 		Windows::Foundation::IAsyncAction^ m_inputLoopWorker;
