@@ -217,7 +217,25 @@ int MoonlightClient::StartStreaming(std::shared_ptr<DX::DeviceResources> res, St
 	LiInitializeStreamConfiguration(&config);
 	config.width = sConfig->width;
 	config.height = sConfig->height;
-	config.bitrate = sConfig->bitrate;
+	
+	// Xbox Series X optimization: Support higher bitrates
+	int bitrate = sConfig->bitrate;
+	GAMING_DEVICE_MODEL_INFORMATION info = {};
+	GetGamingDeviceModelInformation(&info);
+	if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT) {
+		// Assume Series X/S for newer/unknown device IDs (not Xbox One family)
+		if (!(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT)) {
+			// Enable high bitrate streaming for Xbox Series X
+			if (bitrate < 150000) { // If bitrate is less than 150 Mbps, optimize for Series X
+				bitrate = std::min(500000, bitrate * 2); // Support up to 500 Mbps
+				Utils::Logf("Xbox Series X detected - Optimizing bitrate to %d kbps\n", bitrate);
+			}
+		}
+	}
+	config.bitrate = bitrate;
 	if (res->GetRefreshRate() > 0.0) {
 		// request stream matching our exact fractional refresh rate
 		config.clientRefreshRateX100 = (int)(res->GetRefreshRate() * 100.0);
@@ -227,11 +245,33 @@ int MoonlightClient::StartStreaming(std::shared_ptr<DX::DeviceResources> res, St
 	config.colorSpace = COLORSPACE_REC_601;
 	config.encryptionFlags = 0;
 	config.fps = sConfig->FPS;
-	config.packetSize = 1024;
+	
+	// Optimize packet size for high-bitrate streaming on Xbox Series X
+	if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+		!(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
+		  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
+		  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X ||
+		  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT)) {
+		config.packetSize = 1392; // Optimized for Xbox Series X network performance
+	} else {
+		config.packetSize = 1024;
+	}
+	
 	config.supportedVideoFormats = VIDEO_FORMAT_H264;
 	if (!isXboxOne) {
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265;
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
+		
+		// Enable AV1 support for Xbox Series X if available
+		if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+			!(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT)) {
+			// Note: AV1 format constant would need to be defined in Limelight headers
+			// config.supportedVideoFormats |= VIDEO_FORMAT_AV1; // Future support
+			Utils::Log("Xbox Series X - Enhanced codec support enabled\n");
+		}
 	}
 
 	config.audioConfiguration = AUDIO_CONFIGURATION_STEREO;

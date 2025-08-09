@@ -73,9 +73,25 @@ DX::DeviceResources::DeviceResources() :
 	m_compositionScaleX(1.0f),
 	m_compositionScaleY(1.0f),
 	m_deviceNotify(nullptr),
-	m_stats(nullptr)
+	m_stats(nullptr),
+	m_isXboxSeriesX(false),
+	m_useOptimizedPresent(false)
 {
 	m_refreshRate = GetUWPRefreshRate();
+	
+	// Detect Xbox Series X for optimizations
+	GAMING_DEVICE_MODEL_INFORMATION info = {};
+	GetGamingDeviceModelInformation(&info);
+	if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT) {
+		// Assume Series X/S for newer/unknown device IDs (not Xbox One family)
+		if (!(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT)) {
+			m_isXboxSeriesX = true;
+			m_useOptimizedPresent = true;
+		}
+	}
 
 	CreateDeviceIndependentResources();
 	CreateDeviceResources();
@@ -659,14 +675,28 @@ void DX::DeviceResources::Present()
 {
 	HRESULT hr = E_FAIL;
 	DXGI_PRESENT_PARAMETERS parameters = { 0 };
-	if (m_enableVsync) {
-		// This still seems to use vsync due to the lack of DXGI_PRESENT_ALLOW_TEARING
-		hr = m_swapChain->Present1(0, 0, &parameters);
-	}
-	else {
-		// Recommended to always use tearing if supported when using a sync interval of 0.
-		// This call requires VRR to be set to Always On on Xbox
-		hr = m_swapChain->Present1(0, DXGI_PRESENT_ALLOW_TEARING, &parameters);
+	
+	// Xbox Series X optimizations for high-bitrate streaming
+	if (m_isXboxSeriesX && m_useOptimizedPresent) {
+		// Use optimized present parameters for Xbox Series X
+		if (m_enableVsync) {
+			// Use minimal sync for reduced latency while maintaining smoothness
+			hr = m_swapChain->Present1(1, DXGI_PRESENT_RESTART, &parameters);
+		} else {
+			// Enhanced tearing mode for maximum throughput
+			hr = m_swapChain->Present1(0, DXGI_PRESENT_ALLOW_TEARING | DXGI_PRESENT_DO_NOT_WAIT, &parameters);
+		}
+	} else {
+		// Standard present for Xbox One family
+		if (m_enableVsync) {
+			// This still seems to use vsync due to the lack of DXGI_PRESENT_ALLOW_TEARING
+			hr = m_swapChain->Present1(0, 0, &parameters);
+		}
+		else {
+			// Recommended to always use tearing if supported when using a sync interval of 0.
+			// This call requires VRR to be set to Always On on Xbox
+			hr = m_swapChain->Present1(0, DXGI_PRESENT_ALLOW_TEARING, &parameters);
+		}
 	}
 
 	// Discard the contents of the render target.

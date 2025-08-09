@@ -81,9 +81,30 @@ VideoRenderer::VideoRenderer(const std::shared_ptr<DX::DeviceResources>& deviceR
 	m_loadingComplete(false),
 	m_deviceResources(deviceResources),
 	client(mclient),
-	configuration(sConfig)
+	configuration(sConfig),
+	m_useAsyncTextureUpload(false),
+	m_isXboxSeriesX(false),
+	m_maxTexturePoolSize(4),
+	m_currentTextureIndex(0)
 {
 	ZeroMemory(&m_lastHdr10, sizeof(DXGI_HDR_METADATA_HDR10));
+	
+	// Detect Xbox Series X for optimizations
+	GAMING_DEVICE_MODEL_INFORMATION info = {};
+	GetGamingDeviceModelInformation(&info);
+	if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT) {
+		// Assume Series X/S for newer/unknown device IDs (not Xbox One family)
+		if (!(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X ||
+			  info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT)) {
+			m_isXboxSeriesX = true;
+			m_useAsyncTextureUpload = true;
+			m_maxTexturePoolSize = 8; // Increased texture pool for higher throughput
+			Utils::Log("Xbox Series X detected - Enabling GPU optimizations\n");
+		}
+	}
+	
 	CreateDeviceDependentResources();
 	CreateWindowSizeDependentResources();
 }
@@ -127,11 +148,19 @@ bool VideoRenderer::Render()
 	box.bottom = renderTextureDesc.Height;
 	box.front = 0;
 	box.back = 1;
+	
 	if (frame->format != AV_PIX_FMT_D3D11) {
 		char msg[2048];
 		sprintf_s(msg, "Pixel format mismatch - got %d instead of D3D11!\n", frame->format);
 		Utils::Log(msg);
-		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(&renderTextureDesc, NULL, renderTexture.GetAddressOf()), "Render Texture Creation");
+		
+		// Use texture pool for Xbox Series X optimization
+		if (m_isXboxSeriesX && m_currentTextureIndex < m_texturePool.size()) {
+			renderTexture = m_texturePool[m_currentTextureIndex];
+			m_currentTextureIndex = (m_currentTextureIndex + 1) % m_maxTexturePoolSize;
+		} else {
+			DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(&renderTextureDesc, NULL, renderTexture.GetAddressOf()), "Render Texture Creation");
+		}
 	}
 	else {
 		FFMpegDecoder::getInstance()->mutex.lock();
@@ -143,8 +172,24 @@ bool VideoRenderer::Render()
 		box.right = std::min(renderTextureDesc.Width, ffmpegDesc.Width);
 		box.bottom = std::min(renderTextureDesc.Height, ffmpegDesc.Height);
 		renderTextureDesc.Format = ffmpegDesc.Format;
-		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(&renderTextureDesc, NULL, renderTexture.GetAddressOf()), "Render Texture Creation");
-		m_deviceResources->GetD3DDeviceContext()->CopySubresourceRegion(renderTexture.Get(), 0, 0, 0, 0, ffmpegTexture, index, &box);
+		
+		// Use optimized texture handling for Xbox Series X
+		if (m_isXboxSeriesX && m_currentTextureIndex < m_texturePool.size()) {
+			renderTexture = m_texturePool[m_currentTextureIndex];
+			m_currentTextureIndex = (m_currentTextureIndex + 1) % m_maxTexturePoolSize;
+			
+			// Use async texture copy for higher throughput
+			if (m_useAsyncTextureUpload && m_query) {
+				auto context = m_deviceResources->GetD3DDeviceContext();
+				context->CopySubresourceRegion(renderTexture.Get(), 0, 0, 0, 0, ffmpegTexture, index, &box);
+				context->End(m_query.Get()); // Mark completion of async operation
+			} else {
+				m_deviceResources->GetD3DDeviceContext()->CopySubresourceRegion(renderTexture.Get(), 0, 0, 0, 0, ffmpegTexture, index, &box);
+			}
+		} else {
+			DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(&renderTextureDesc, NULL, renderTexture.GetAddressOf()), "Render Texture Creation");
+			m_deviceResources->GetD3DDeviceContext()->CopySubresourceRegion(renderTexture.Get(), 0, 0, 0, 0, ffmpegTexture, index, &box);
+		}
 	}
 
 	auto context = m_deviceResources->GetD3DDeviceContext();
@@ -430,6 +475,33 @@ void VideoRenderer::CreateDeviceDependentResources()
 		}
 		m_loadingComplete = true;
 		Utils::Log("Loading Complete!\n");
+		
+		// Initialize Xbox Series X optimizations
+		if (m_isXboxSeriesX) {
+			// Create query object for async operations
+			D3D11_QUERY_DESC queryDesc = {};
+			queryDesc.Query = D3D11_QUERY_EVENT;
+			m_deviceResources->GetD3DDevice()->CreateQuery(&queryDesc, &m_query);
+			
+			// Pre-allocate texture pool for high-throughput streaming
+			m_texturePool.resize(m_maxTexturePoolSize);
+			for (UINT i = 0; i < m_maxTexturePoolSize; i++) {
+				D3D11_TEXTURE2D_DESC poolDesc = renderTextureDesc;
+				poolDesc.Usage = D3D11_USAGE_DEFAULT;
+				poolDesc.CPUAccessFlags = 0;
+				poolDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				m_deviceResources->GetD3DDevice()->CreateTexture2D(&poolDesc, nullptr, &m_texturePool[i]);
+			}
+			
+			// Create staging texture for async uploads
+			D3D11_TEXTURE2D_DESC stagingDesc = renderTextureDesc;
+			stagingDesc.Usage = D3D11_USAGE_STAGING;
+			stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+			stagingDesc.BindFlags = 0;
+			m_deviceResources->GetD3DDevice()->CreateTexture2D(&stagingDesc, nullptr, &m_stagingTexture);
+			
+			Utils::Log("Xbox Series X GPU optimizations initialized\n");
+		}
 		});
 }
 
@@ -445,6 +517,14 @@ void VideoRenderer::ReleaseDeviceDependentResources()
 	m_constantBuffer.Reset();
 	m_vertexBuffer.Reset();
 	m_indexBuffer.Reset();
+	
+	// Clean up Xbox Series X optimizations
+	if (m_isXboxSeriesX) {
+		m_query.Reset();
+		m_stagingTexture.Reset();
+		m_texturePool.clear();
+		m_currentTextureIndex = 0;
+	}
 }
 
 void VideoRenderer::scaleSourceToDestinationSurface(IRECT* src, IRECT* dst)

@@ -4,7 +4,7 @@
   {
     "name": "ffmpeg",
     "default-features": false,
-    "features":  ["avcodec","avdevice","swscale","x264"]
+    "features":  ["avcodec","avdevice","swscale","x264","av1"]
   },
   "curl",
   "openssl",

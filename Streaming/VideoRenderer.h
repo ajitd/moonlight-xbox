@@ -4,6 +4,8 @@
 #include "Common\StepTimer.h"
 #include "State\MoonlightClient.h"
 #include "State\StreamConfiguration.h"
+#include <vector>
+#include <gamingdeviceinformation.h>
 
 namespace moonlight_xbox_dx
 {
@@ -48,6 +50,15 @@ namespace moonlight_xbox_dx
 		D3D11_TEXTURE2D_DESC						renderTextureDesc;
 		Windows::Graphics::Display::Core::HdmiDisplayMode^ m_lastDisplayMode;
 		Windows::Graphics::Display::Core::HdmiDisplayMode^ m_currentDisplayMode;
+
+		// Xbox Series X optimizations
+		Microsoft::WRL::ComPtr<ID3D11Query>			m_query;
+		Microsoft::WRL::ComPtr<ID3D11Texture2D>		m_stagingTexture;
+		bool m_useAsyncTextureUpload;
+		bool m_isXboxSeriesX;
+		UINT m_maxTexturePoolSize;
+		std::vector<Microsoft::WRL::ComPtr<ID3D11Texture2D>> m_texturePool;
+		UINT m_currentTextureIndex;
 
 		// System resources for cube geometry.
 		ModelViewProjectionConstantBuffer	m_constantBufferData;
