@@ -1,6 +1,8 @@
 ﻿#include "pch.h"
 #include "moonlight_xbox_dxMain.h"
 #include "Common\DirectXHelper.h"
+#include "Common\XboxHardwareDetection.h"
+#include "Common\XboxCompatibilityTester.h"
 #include "Utils.hpp"
 #include <Pages/StreamPage.xaml.h>
 using namespace Windows::Gaming::Input;
@@ -33,16 +35,51 @@ void moonlight_xbox_dx::usleep(unsigned int usec)
 
 // Loads and initializes application assets when the application is loaded.
 moonlight_xbox_dxMain::moonlight_xbox_dxMain(const std::shared_ptr<DX::DeviceResources>& deviceResources, StreamPage^ streamPage, MoonlightClient* client, StreamConfiguration^ configuration) :
-
-	m_deviceResources(deviceResources), m_pointerLocationX(0.0f), m_streamPage(streamPage), moonlightClient(client)
+	m_deviceResources(deviceResources), 
+	m_pointerLocationX(0.0f), 
+	m_streamPage(streamPage), 
+	moonlightClient(client),
+	m_xboxHardware(XboxHardwareDetection::GetInstance()),
+	m_usingD3D12Ultimate(false)
 {
 	// Register to be notified if the Device is lost or recreated
 	m_deviceResources->RegisterDeviceNotify(this);
 
+	// Check if we can use DirectX 12 Ultimate
+	if (m_xboxHardware.SupportsDirectX12Ultimate())
+	{
+		try
+		{
+			// Try to create DirectX 12 device resources
+			m_deviceResourcesD3D12 = std::make_shared<DX::DeviceResourcesD3D12>();
+			if (m_deviceResourcesD3D12->SupportsD3D12Ultimate())
+			{
+				m_usingD3D12Ultimate = true;
+				m_sceneRendererD3D12 = std::make_unique<VideoRendererD3D12>(m_deviceResourcesD3D12, moonlightClient, configuration);
+				
+				// Enable Xbox Series X optimizations if supported
+				if (m_xboxHardware.IsXboxSeriesX())
+				{
+					EnableXboxSeriesXOptimizations();
+				}
+			}
+		}
+		catch (...)
+		{
+			// Fall back to DirectX 11 on failure
+			m_usingD3D12Ultimate = false;
+			m_deviceResourcesD3D12.reset();
+		}
+	}
+
+	// Create DirectX 11 renderer if D3D12 is not available or failed
+	if (!m_usingD3D12Ultimate)
+	{
+		m_sceneRenderer = std::make_unique<VideoRenderer>(m_deviceResources, moonlightClient, configuration);
+	}
+
 	// Vsync forced to ON (via constructor default) until VRR works
 	// m_deviceResources->SetEnableVsync(configuration->enableVsync);
-
-	m_sceneRenderer = std::make_unique<VideoRenderer>(m_deviceResources, moonlightClient, configuration);
 
 	m_LogRenderer = std::make_unique<LogRenderer>(m_deviceResources);
 
@@ -68,7 +105,14 @@ moonlight_xbox_dxMain::moonlight_xbox_dxMain(const std::shared_ptr<DX::DeviceRes
 		});
 
 	client->SetHDR = ([this](bool v) {
-		this->m_sceneRenderer->SetHDR(v);
+		if (m_usingD3D12Ultimate && m_sceneRendererD3D12)
+		{
+			m_sceneRendererD3D12->SetHDR(v);
+		}
+		else if (m_sceneRenderer)
+		{
+			m_sceneRenderer->SetHDR(v);
+		}
 	});
 
 	m_timer.SetFixedTimeStep(false);
@@ -87,7 +131,15 @@ void moonlight_xbox_dxMain::CreateDeviceDependentResources()
 // Updates application state when the window size changes (e.g. device orientation change)
 void moonlight_xbox_dxMain::CreateWindowSizeDependentResources()
 {
-	m_sceneRenderer->CreateWindowSizeDependentResources();
+	if (m_usingD3D12Ultimate && m_sceneRendererD3D12)
+	{
+		m_sceneRendererD3D12->CreateWindowSizeDependentResources();
+	}
+	else if (m_sceneRenderer)
+	{
+		m_sceneRenderer->CreateWindowSizeDependentResources();
+	}
+	
 	m_LogRenderer->CreateWindowSizeDependentResources();
 	m_statsTextRenderer->CreateWindowSizeDependentResources();
 }
@@ -358,10 +410,17 @@ bool moonlight_xbox_dxMain::Render()
 
 	Clear();
 
-	auto context = m_deviceResources->GetD3DDeviceContext();
-
-	// Render the scene objects.
-	bool shouldPresent = m_sceneRenderer->Render();
+	// Render the scene objects using appropriate renderer
+	bool shouldPresent = false;
+	if (m_usingD3D12Ultimate && m_sceneRendererD3D12)
+	{
+		shouldPresent = m_sceneRendererD3D12->Render();
+	}
+	else if (m_sceneRenderer)
+	{
+		shouldPresent = m_sceneRenderer->Render();
+	}
+	
 	m_LogRenderer->Render();
 	m_statsTextRenderer->Render();
 
@@ -459,4 +518,36 @@ void moonlight_xbox_dxMain::SetShowLogs(bool showLogs) {
 
 void moonlight_xbox_dxMain::SetShowStats(bool showStats) {
 	m_statsTextRenderer->SetVisible(showStats);
+}
+
+void moonlight_xbox_dxMain::EnableXboxSeriesXOptimizations()
+{
+	if (m_usingD3D12Ultimate && m_sceneRendererD3D12 && m_xboxHardware.IsXboxSeriesX())
+	{
+		// Enable Xbox Series X specific optimizations
+		m_sceneRendererD3D12->OptimizeForXboxSeriesX();
+		
+		// Configure based on hardware capabilities
+		if (m_xboxHardware.ShouldUseVariableRateShading())
+		{
+			m_sceneRendererD3D12->EnableVariableRateShading(true);
+		}
+		
+		// Enable ray tracing only if recommended and supported
+		if (m_xboxHardware.ShouldEnableRayTracing())
+		{
+			m_sceneRendererD3D12->EnableRayTracing(true);
+		}
+		
+		// Configure performance vs quality mode
+		bool prioritizePerformance = m_xboxHardware.ShouldPrioritizePerformance();
+		m_sceneRendererD3D12->ConfigurePerformanceMode(prioritizePerformance);
+	}
+}
+
+std::string moonlight_xbox_dxMain::RunCompatibilityTests()
+{
+	XboxCompatibilityTester tester;
+	auto results = tester.RunAllTests();
+	return tester.GenerateCompatibilityReport(results);
 }

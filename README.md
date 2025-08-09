@@ -6,6 +6,28 @@ A port of [Moonlight Stream](https://moonlight-stream.org/) for playing games us
 
 **This application is still in early stages of development. Expect things to not work or working badly**
 
+## DirectX 12 Ultimate Support (Xbox Series X|S)
+
+This enhanced version now includes DirectX 12 Ultimate support for Xbox Series X|S consoles, providing:
+
+### New Features:
+- **DirectX 12 Ultimate**: Modern rendering pipeline for next-generation Xbox consoles
+- **Variable Rate Shading (VRS)**: Improved performance by reducing shading in peripheral areas
+- **Hardware Ray Tracing**: Optional enhanced reflections and lighting (Xbox Series X)
+- **Xbox Hardware Detection**: Automatic detection and optimization for Xbox Series X|S vs Xbox One
+- **Backward Compatibility**: Seamless fallback to DirectX 11 for Xbox One family
+
+### Performance Improvements:
+- **Xbox Series X**: Optimized for 4K HDR streaming with full DirectX 12 Ultimate features
+- **Xbox Series S**: Optimized for 1440p streaming with performance-focused settings
+- **Xbox One**: Maintains compatibility with existing DirectX 11 rendering
+
+### Technical Features:
+- Automatic hardware capability detection
+- Runtime API selection (DirectX 12 Ultimate → DirectX 12 → DirectX 11)
+- Enhanced shader pipeline with VRS support
+- Memory optimization for different Xbox hardware configurations
+
 ## Installation and Usage
 ### For Retail Mode (you probably want to use this)
 1. Open Microsoft Edge and click the "Get it from Microsoft" Button above 
@@ -38,6 +60,9 @@ A port of [Moonlight Stream](https://moonlight-stream.org/) for playing games us
 - Host configuration (for resolution and bitrate) and saved host history
 - Audio
 - HDR
+- **DirectX 12 Ultimate support** (Xbox Series X|S)
+- **Variable Rate Shading** for improved performance
+- **Hardware-accelerated rendering** on next-gen Xbox consoles
 
 ## What does NOT work
 - Hardware Mouse (UWP Limitations sadly)
