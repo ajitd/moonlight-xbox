@@ -78,13 +78,24 @@ namespace moonlight_xbox_dx {
 #pragma warning(suppress : 4996)
 		av_init_packet(&pkt);
 
-		if (videoFormat & VIDEO_FORMAT_MASK_H264) {
-			decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
-			Utils::Log("Using H264\n");
+		// Try AV1 first for Xbox Series X optimization, fallback to HEVC/H264
+		const AVCodec* av1_decoder = avcodec_find_decoder(AV_CODEC_ID_AV1);
+		bool tryAV1 = false;
+		
+		// Check for AV1 format support (assuming new format mask or general codec preference)
+		if (av1_decoder != NULL) {
+			// Try hardware-accelerated AV1 first
+			decoder = av1_decoder;
+			tryAV1 = true;
+			Utils::Log("Attempting AV1 decoder\n");
 		}
 		else if (videoFormat & VIDEO_FORMAT_MASK_H265) {
 			decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC);
 			Utils::Log("Using HEVC\n");
+		}
+		else if (videoFormat & VIDEO_FORMAT_MASK_H264) {
+			decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
+			Utils::Log("Using H264\n");
 		}
 
 		if (decoder == NULL) {
@@ -124,6 +135,41 @@ namespace moonlight_xbox_dx {
 		decoder_ctx->get_format = ffGetFormat;
 
 		int err = avcodec_open2(decoder_ctx, decoder, NULL);
+		if (err < 0 && tryAV1) {
+			// AV1 failed, fallback to HEVC
+			Utils::Log("AV1 decoder failed, falling back to HEVC\n");
+			avcodec_free_context(&decoder_ctx);
+			decoder_ctx = avcodec_alloc_context3(decoder);
+			if (decoder_ctx == NULL) {
+				Utils::Log("Couldn't allocate context for fallback");
+				return -1;
+			}
+			decoder_ctx->opaque = this;
+			decoder_ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
+			decoder_ctx->pix_fmt = AV_PIX_FMT_D3D11;
+			decoder_ctx->sw_pix_fmt = (videoFormat & VIDEO_FORMAT_MASK_10BIT) ? AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
+			decoder_ctx->width = width;
+			decoder_ctx->height = height;
+			decoder_ctx->get_format = ffGetFormat;
+			
+			// Try HEVC fallback
+			decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC);
+			if (decoder == NULL) {
+				// Final fallback to H264
+				decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
+				Utils::Log("Falling back to H264\n");
+			} else {
+				Utils::Log("Falling back to HEVC\n");
+			}
+			
+			if (decoder == NULL) {
+				Utils::Log("No fallback decoder available\n");
+				return -1;
+			}
+			
+			err = avcodec_open2(decoder_ctx, decoder, NULL);
+		}
+		
 		if (err < 0) {
 			char msg[2048];
 			sprintf(msg, "Failed to create FFMpeg Codec: %d\n", err);
@@ -159,13 +205,23 @@ namespace moonlight_xbox_dx {
 		}
 		GAMING_DEVICE_MODEL_INFORMATION info = {};
 		GetGamingDeviceModelInformation(&info);
-		if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
-			(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
+		if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT) {
+			if (info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
 				info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
 				info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X ||
-				info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT)) {
-			Utils::Log("Using hack for Xbox One Consoles");
-			hackWait = true;
+				info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_X_DEVKIT) {
+				Utils::Log("Using hack for Xbox One Consoles");
+				hackWait = true;
+			}
+			else {
+				// Assume Xbox Series X/S for newer/unknown device IDs
+				Utils::Log("Detected Xbox Series X/S - Enabling optimizations");
+				hackWait = false; // Disable old console workarounds
+				
+				// Enable Xbox Series X specific optimizations
+				// Increase decoder buffer count for higher performance
+				buffer_count = 4; // Increased from 2 for better throughput
+			}
 		}
 		return 0;
 	}

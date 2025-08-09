@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "../State/Stats.h"
+#include <gamingdeviceinformation.h>
 
 namespace DX
 {
@@ -93,6 +94,10 @@ namespace DX
 		float											m_compositionScaleX;
 		float											m_compositionScaleY;
 		DWORD                                           m_dxgiFactoryFlags;
+		
+		// Xbox Series X optimizations
+		bool											m_isXboxSeriesX;
+		bool											m_useOptimizedPresent;
 		double                                          m_refreshRate;
 
 		// Variables that take into account whether the app supports high resolution screens or not.
