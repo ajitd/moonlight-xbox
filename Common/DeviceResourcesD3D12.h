@@ -22,26 +22,23 @@ namespace DX
     };
 
     // DirectX 12 Device Resources with backward compatibility
-    class DeviceResourcesD3D12 : public DeviceResources
+    class DeviceResourcesD3D12
     {
     public:
         DeviceResourcesD3D12();
         virtual ~DeviceResourcesD3D12();
 
-        // Override base class methods
-        void CreateDeviceResources() override;
-        void CreateWindowSizeDependentResources() override;
-        void ValidateDevice() override;
-        void HandleDeviceLost() override;
-        void Present() override;
-
-        // D3D12-specific methods
+        // D3D12-specific methods (not overrides)
         bool InitializeD3D12();
         void CreateD3D12CommandQueue();
         void CreateD3D12SwapChain();
         void CreateD3D12RenderTargets();
         void CreateD3D12DepthStencil();
         void CreateD3D12Fence();
+        void CreateD3D12WindowSizeDependentResources();
+        void ValidateD3D12Device();
+        void HandleD3D12DeviceLost();
+        void PresentD3D12();
 
         // Xbox hardware detection
         XboxCapabilities DetectXboxCapabilities();
@@ -62,6 +59,15 @@ namespace DX
         ID3D12GraphicsCommandList4* GetD3D12CommandList() const { return m_commandList.Get(); }
         ID3D12Resource* GetCurrentRenderTarget() const;
         D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRenderTargetView() const;
+        
+        // Compatibility accessors
+        Windows::Foundation::Size GetOutputSize() const { return m_outputSize; }
+        DXGI_FORMAT GetBackBufferFormat() const { return m_backBufferFormat; }
+        IDXGIFactory2* GetDXGIFactory() const { return m_dxgiFactory.Get(); }
+        
+        // Configuration methods
+        void SetSwapChainPanel(Windows::UI::Xaml::Controls::SwapChainPanel^ panel) { m_swapChainPanel = panel; }
+        void SetLogicalSize(Windows::Foundation::Size logicalSize) { m_outputSize = logicalSize; m_d3dRenderTargetSize = logicalSize; }
 
         // Feature support queries
         bool CheckD3D12UltimateSupport();
@@ -97,6 +103,13 @@ namespace DX
         bool                                            m_useD3D12;
         bool                                            m_vrsEnabled;
         bool                                            m_rayTracingEnabled;
+
+        // DirectX compatibility objects  
+        Microsoft::WRL::ComPtr<IDXGIFactory2>           m_dxgiFactory;
+        Windows::Foundation::Size                        m_outputSize;
+        Windows::Foundation::Size                        m_d3dRenderTargetSize;
+        DXGI_FORMAT                                      m_backBufferFormat;
+        Windows::UI::Xaml::Controls::SwapChainPanel^    m_swapChainPanel;
 
         // D3D12 Ultimate features
         Microsoft::WRL::ComPtr<ID3D12VariableRateShadingTier2> m_vrsInterface;

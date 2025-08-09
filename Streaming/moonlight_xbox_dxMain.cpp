@@ -2,6 +2,7 @@
 #include "moonlight_xbox_dxMain.h"
 #include "Common\DirectXHelper.h"
 #include "Common\XboxHardwareDetection.h"
+#include "Common\XboxCompatibilityTester.h"
 #include "Utils.hpp"
 #include <Pages/StreamPage.xaml.h>
 using namespace Windows::Gaming::Input;
@@ -542,4 +543,11 @@ void moonlight_xbox_dxMain::EnableXboxSeriesXOptimizations()
 		bool prioritizePerformance = m_xboxHardware.ShouldPrioritizePerformance();
 		m_sceneRendererD3D12->ConfigurePerformanceMode(prioritizePerformance);
 	}
+}
+
+std::string moonlight_xbox_dxMain::RunCompatibilityTests()
+{
+	XboxCompatibilityTester tester;
+	auto results = tester.RunAllTests();
+	return tester.GenerateCompatibilityReport(results);
 }

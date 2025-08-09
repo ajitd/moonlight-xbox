@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "VideoRenderer.h"
+#include "RayTracingHelper.h"
 #include "../Common/DeviceResourcesD3D12.h"
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -57,6 +58,7 @@ namespace moonlight_xbox_dx
         bool m_vrsEnabled;
 
         // Ray tracing resources (optional)
+        std::unique_ptr<RayTracingHelper> m_rayTracingHelper;
         Microsoft::WRL::ComPtr<ID3D12StateObject> m_rayTracingPipelineState;
         Microsoft::WRL::ComPtr<ID3D12Resource> m_rayTracingOutput;
         bool m_rayTracingEnabled;

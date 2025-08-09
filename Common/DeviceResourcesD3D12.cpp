@@ -12,15 +12,21 @@ using namespace Windows::Gaming::Input;
 
 // Constructor for DeviceResourcesD3D12
 DeviceResourcesD3D12::DeviceResourcesD3D12() :
-    DeviceResources(),
     m_frameIndex(0),
     m_rtvDescriptorSize(0),
     m_fenceEvent(nullptr),
     m_useD3D12(false),
     m_vrsEnabled(false),
-    m_rayTracingEnabled(false)
+    m_rayTracingEnabled(false),
+    m_backBufferFormat(DXGI_FORMAT_R10G10B10A2_UNORM),
+    m_swapChainPanel(nullptr)
 {
     ZeroMemory(m_fenceValues, sizeof(m_fenceValues));
+    
+    // Set default output size
+    m_outputSize.Width = 1920;
+    m_outputSize.Height = 1080;
+    m_d3dRenderTargetSize = m_outputSize;
     
     // Detect Xbox capabilities first
     m_xboxCaps = DetectXboxCapabilities();
@@ -40,12 +46,6 @@ DeviceResourcesD3D12::DeviceResourcesD3D12() :
             // Fall back to D3D11 on failure
             m_useD3D12 = false;
         }
-    }
-    
-    // If D3D12 initialization failed, use base D3D11 implementation
-    if (!m_useD3D12)
-    {
-        DeviceResources::CreateDeviceResources();
     }
 }
 
@@ -103,7 +103,7 @@ bool DeviceResourcesD3D12::InitializeD3D12()
 
 #if defined(_DEBUG)
     // Enable the debug layer
-    ComPtr<ID3D12Debug> debugController;
+    Microsoft::WRL::ComPtr<ID3D12Debug> debugController;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
     {
         debugController->EnableDebugLayer();
@@ -112,13 +112,12 @@ bool DeviceResourcesD3D12::InitializeD3D12()
 #endif
 
     // Create DXGI factory
-    Microsoft::WRL::ComPtr<IDXGIFactory4> factory;
-    DX::ThrowIfFailed(CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory)));
+    DX::ThrowIfFailed(CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&m_dxgiFactory)));
 
     // Try to create D3D12 device
-    ComPtr<IDXGIAdapter1> hardwareAdapter;
+    Microsoft::WRL::ComPtr<IDXGIAdapter1> hardwareAdapter;
     
-    for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != factory->EnumAdapters1(adapterIndex, &hardwareAdapter); ++adapterIndex)
+    for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != m_dxgiFactory->EnumAdapters1(adapterIndex, &hardwareAdapter); ++adapterIndex)
     {
         DXGI_ADAPTER_DESC1 desc;
         hardwareAdapter->GetDesc1(&desc);
@@ -229,31 +228,13 @@ void DeviceResourcesD3D12::EnableRayTracing(bool enable)
     }
 }
 
-void DeviceResourcesD3D12::CreateDeviceResources()
-{
-    if (m_useD3D12)
-    {
-        // D3D12 device resources already created in constructor
-        return;
-    }
-    else
-    {
-        // Fall back to D3D11
-        DeviceResources::CreateDeviceResources();
-    }
-}
-
-void DeviceResourcesD3D12::CreateWindowSizeDependentResources()
+void DeviceResourcesD3D12::CreateD3D12WindowSizeDependentResources()
 {
     if (m_useD3D12)
     {
         CreateD3D12SwapChain();
         CreateD3D12RenderTargets();
         CreateD3D12DepthStencil();
-    }
-    else
-    {
-        DeviceResources::CreateWindowSizeDependentResources();
     }
 }
 
@@ -364,23 +345,19 @@ void DeviceResourcesD3D12::CreateD3D12DepthStencil()
     m_d3d12Device->CreateDepthStencilView(m_depthStencil.Get(), &depthStencilDesc, m_dsvHeap->GetCPUDescriptorHandleForHeapStart());
 }
 
-void DeviceResourcesD3D12::ValidateDevice()
+void DeviceResourcesD3D12::ValidateD3D12Device()
 {
     if (m_useD3D12)
     {
         // D3D12 device validation
         if (!m_d3d12Device)
         {
-            HandleDeviceLost();
+            HandleD3D12DeviceLost();
         }
-    }
-    else
-    {
-        DeviceResources::ValidateDevice();
     }
 }
 
-void DeviceResourcesD3D12::HandleDeviceLost()
+void DeviceResourcesD3D12::HandleD3D12DeviceLost()
 {
     if (m_useD3D12)
     {
@@ -410,27 +387,22 @@ void DeviceResourcesD3D12::HandleDeviceLost()
         {
             // Fall back to D3D11
             m_useD3D12 = false;
-            DeviceResources::HandleDeviceLost();
         }
-    }
-    else
-    {
-        DeviceResources::HandleDeviceLost();
     }
 }
 
-void DeviceResourcesD3D12::Present()
+void DeviceResourcesD3D12::PresentD3D12()
 {
     if (m_useD3D12)
     {
         // Present the frame
-        HRESULT hr = m_d3d12SwapChain->Present(m_enableVsync ? 1 : 0, 0);
+        HRESULT hr = m_d3d12SwapChain->Present(1, 0); // Always use VSync for now
         
         if (FAILED(hr))
         {
             if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
             {
-                HandleDeviceLost();
+                HandleD3D12DeviceLost();
             }
             else
             {
@@ -441,10 +413,6 @@ void DeviceResourcesD3D12::Present()
         {
             MoveToNextFrame();
         }
-    }
-    else
-    {
-        DeviceResources::Present();
     }
 }
 

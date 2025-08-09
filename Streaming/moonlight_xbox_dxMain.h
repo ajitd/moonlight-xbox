@@ -40,6 +40,9 @@ namespace moonlight_xbox_dx
 		// Enhanced Xbox Series X support
 		void EnableXboxSeriesXOptimizations();
 		bool IsUsingDirectX12Ultimate() const { return m_usingD3D12Ultimate; }
+		
+		// Compatibility testing
+		std::string RunCompatibilityTests();
 
 	private:
 		void ProcessInput();

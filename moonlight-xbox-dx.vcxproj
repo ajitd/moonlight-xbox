@@ -329,6 +329,7 @@
     <ClInclude Include="Common\TextConsole.h" />
     <ClInclude Include="Common\DeviceResourcesD3D12.h" />
     <ClInclude Include="Common\XboxHardwareDetection.h" />
+    <ClInclude Include="Common\XboxCompatibilityTester.h" />
     <ClInclude Include="MoonlightWelcome.xaml.h">
       <DependentUpon>MoonlightWelcome.xaml</DependentUpon>
     </ClInclude>
@@ -345,6 +346,7 @@
     <ClInclude Include="Common\StepTimer.h" />
     <ClInclude Include="Streaming\VideoRenderer.h" />
     <ClInclude Include="Streaming\VideoRendererD3D12.h" />
+    <ClInclude Include="Streaming\RayTracingHelper.h" />
     <ClInclude Include="Streaming\LogRenderer.h" />
     <ClInclude Include="Streaming\ShaderStructures.h" />
     <ClInclude Include="State\MDNSHandler.h" />
@@ -381,6 +383,7 @@
     <ClCompile Include="Common\TextConsole.cpp" />
     <ClCompile Include="Common\DeviceResourcesD3D12.cpp" />
     <ClCompile Include="Common\XboxHardwareDetection.cpp" />
+    <ClCompile Include="Common\XboxCompatibilityTester.cpp" />
     <ClCompile Include="Keyboard\kbda1.cpp" />
     <ClCompile Include="Keyboard\kbda2.cpp" />
     <ClCompile Include="Keyboard\kbda3.cpp" />
@@ -479,6 +482,7 @@
     <ClCompile Include="Streaming\LogRenderer.cpp" />
     <ClCompile Include="Streaming\VideoRenderer.cpp" />
     <ClCompile Include="Streaming\VideoRendererD3D12.cpp" />
+    <ClCompile Include="Streaming\RayTracingHelper.cpp" />
     <ClCompile Include="State\MDNSHandler.cpp" />
     <ClCompile Include="Pages\HostSettingsPage.xaml.cpp">
       <DependentUpon>Pages\HostSettingsPage.xaml</DependentUpon>

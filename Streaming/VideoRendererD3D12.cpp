@@ -255,9 +255,19 @@ void VideoRendererD3D12::CreateD3D12RayTracingResources()
     if (!m_deviceResourcesD3D12->CheckRayTracingSupport())
         return;
 
-    // Ray tracing implementation would go here
-    // This is optional and can enhance reflections/lighting in the video stream
-    // For now, we'll leave this as a placeholder for future enhancement
+    auto device = m_deviceResourcesD3D12->GetD3D12Device();
+    if (!device)
+        return;
+
+    // Create ray tracing helper
+    m_rayTracingHelper = std::make_unique<RayTracingHelper>(device);
+    
+    auto outputSize = m_deviceResourcesD3D12->GetOutputSize();
+    if (m_rayTracingHelper->Initialize(static_cast<UINT>(outputSize.Width), static_cast<UINT>(outputSize.Height)))
+    {
+        // Ray tracing successfully initialized
+        m_rayTracingHelper->SetEnabled(false); // Start disabled for performance
+    }
 }
 
 void VideoRendererD3D12::EnableVariableRateShading(bool enable)
@@ -271,9 +281,10 @@ void VideoRendererD3D12::EnableVariableRateShading(bool enable)
 
 void VideoRendererD3D12::EnableRayTracing(bool enable)
 {
-    if (m_deviceResourcesD3D12->CheckRayTracingSupport())
+    if (m_deviceResourcesD3D12->CheckRayTracingSupport() && m_rayTracingHelper)
     {
         m_rayTracingEnabled = enable;
+        m_rayTracingHelper->SetEnabled(enable);
         m_deviceResourcesD3D12->EnableRayTracing(enable);
     }
 }
@@ -346,6 +357,13 @@ void VideoRendererD3D12::ReleaseDeviceDependentResources()
     m_textureUploadBuffer.Reset();
     m_enhancedTexture.Reset();
     m_srvDescriptorHeap.Reset();
+
+    // Clean up ray tracing resources
+    if (m_rayTracingHelper)
+    {
+        m_rayTracingHelper->Shutdown();
+        m_rayTracingHelper.reset();
+    }
 
     // Call base class cleanup
     VideoRenderer::ReleaseDeviceDependentResources();
