@@ -230,8 +230,26 @@ int MoonlightClient::StartStreaming(std::shared_ptr<DX::DeviceResources> res, St
 	config.packetSize = 1024;
 	config.supportedVideoFormats = VIDEO_FORMAT_H264;
 	if (!isXboxOne) {
+		GAMING_DEVICE_MODEL_INFORMATION info = {};
+		GetGamingDeviceModelInformation(&info);
+		bool isXboxSeriesX = (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+			(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X_DEVKIT ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S_DEVKIT));
+
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265;
 		config.supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
+		config.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN8;
+		config.supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN10;
+		config.supportedVideoFormats |= VIDEO_FORMAT_AV1_HIGH8_444;
+		config.supportedVideoFormats |= VIDEO_FORMAT_AV1_HIGH10_444;
+		
+		if (isXboxSeriesX) {
+			config.supportedVideoFormats |= VIDEO_FORMAT_H265_REXT8_444;
+			config.supportedVideoFormats |= VIDEO_FORMAT_H265_REXT10_444;
+			Utils::Log("Xbox Series X: Enabled advanced video codec support");
+		}
 	}
 
 	config.audioConfiguration = AUDIO_CONFIGURATION_STEREO;

@@ -39,8 +39,8 @@ moonlight_xbox_dxMain::moonlight_xbox_dxMain(const std::shared_ptr<DX::DeviceRes
 	// Register to be notified if the Device is lost or recreated
 	m_deviceResources->RegisterDeviceNotify(this);
 
-	// Vsync forced to ON (via constructor default) until VRR works
-	// m_deviceResources->SetEnableVsync(configuration->enableVsync);
+	// Vsync as configured by user
+	m_deviceResources->SetEnableVsync(configuration->enableVsync);
 
 	m_sceneRenderer = std::make_unique<VideoRenderer>(m_deviceResources, moonlightClient, configuration);
 

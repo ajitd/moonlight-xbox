@@ -86,6 +86,10 @@ namespace moonlight_xbox_dx {
 			decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC);
 			Utils::Log("Using HEVC\n");
 		}
+		else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+			decoder = avcodec_find_decoder(AV_CODEC_ID_AV1);
+			Utils::Log("Using AV1\n");
+		}
 
 		if (decoder == NULL) {
 			Utils::Log("Couldn't find decoder\n");
@@ -122,21 +126,73 @@ namespace moonlight_xbox_dx {
 		decoder_ctx->width = width;
 		decoder_ctx->height = height;
 		decoder_ctx->get_format = ffGetFormat;
+		
+		AVDictionary* opts = nullptr;
+		
+		if (isXboxSeriesX) {
+			decoder_ctx->thread_count = 0;
+			decoder_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+			
+			// Increase hardware frames for high bitrate content
+			decoder_ctx->extra_hw_frames = (width >= 3840 || height >= 2160) ? 6 : 4;
+			
+			if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+				av_dict_set(&opts, "threads", "8", 0);
+				av_dict_set(&opts, "film_grain", "0", 0);
+				av_dict_set(&opts, "tiles", "auto", 0);  // Enable tile-based decoding
+				av_dict_set(&opts, "lowdelay", "1", 0);  // Low latency for streaming
+				Utils::Log("Xbox Series X: Optimized AV1 decode parameters with tiles and low-latency");
+			} else if (videoFormat & VIDEO_FORMAT_MASK_H265) {
+				av_dict_set(&opts, "threads", "6", 0);
+				av_dict_set(&opts, "strict", "-2", 0);   // Allow experimental features
+				av_dict_set(&opts, "lowdelay", "1", 0);  // Low latency for streaming
+				// Enable range extensions for high quality content
+				if (videoFormat & (VIDEO_FORMAT_H265_REXT8_444 | VIDEO_FORMAT_H265_REXT10_444)) {
+					av_dict_set(&opts, "strict", "experimental", 0);
+				}
+				Utils::Log("Xbox Series X: Optimized HEVC decode parameters with range extensions");
+			} else if (videoFormat & VIDEO_FORMAT_MASK_H264) {
+				av_dict_set(&opts, "threads", "4", 0);
+				av_dict_set(&opts, "lowdelay", "1", 0);  // Low latency for streaming
+				Utils::Log("Xbox Series X: Optimized H.264 decode parameters");
+			}
+		}
 
-		int err = avcodec_open2(decoder_ctx, decoder, NULL);
+		int err = avcodec_open2(decoder_ctx, decoder, &opts);
+		if (opts) {
+			av_dict_free(&opts);
+		}
 		if (err < 0) {
 			char msg[2048];
 			sprintf(msg, "Failed to create FFMpeg Codec: %d\n", err);
 			Utils::Log(msg);
 			return err;
 		}
-		ffmpeg_buffer = (unsigned char*)malloc(DECODER_BUFFER_SIZE + AV_INPUT_BUFFER_PADDING_SIZE);
+		// Optimize buffer size based on resolution and codec
+		size_t buffer_multiplier = 2;
+		if (isXboxSeriesX) {
+			if (width >= 3840 || height >= 2160) {
+				buffer_multiplier = 4;  // 4K content needs larger buffers
+			} else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+				buffer_multiplier = 3;  // AV1 benefits from larger buffers
+			}
+		}
+		size_t buffer_size = isXboxSeriesX ? (DECODER_BUFFER_SIZE * buffer_multiplier) : DECODER_BUFFER_SIZE;
+		ffmpeg_buffer = (unsigned char*)malloc(buffer_size + AV_INPUT_BUFFER_PADDING_SIZE);
 		if (ffmpeg_buffer == NULL) {
 			Utils::Log("OOM\n");
 			Cleanup();
 			return -1;
 		}
-		int buffer_count = 2;
+		GAMING_DEVICE_MODEL_INFORMATION info = {};
+		GetGamingDeviceModelInformation(&info);
+		bool isXboxSeriesX = (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+			(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X_DEVKIT ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S_DEVKIT));
+
+		int buffer_count = isXboxSeriesX ? 4 : 2;
 		dec_frames_cnt = buffer_count;
 		dec_frames = (AVFrame**)malloc(buffer_count * sizeof(AVFrame*));
 		ready_frames = (AVFrame**)malloc(buffer_count * sizeof(AVFrame*));
@@ -157,8 +213,6 @@ namespace moonlight_xbox_dx {
 				return -1;
 			}
 		}
-		GAMING_DEVICE_MODEL_INFORMATION info = {};
-		GetGamingDeviceModelInformation(&info);
 		if (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
 			(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE ||
 				info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_ONE_S ||
@@ -204,8 +258,26 @@ namespace moonlight_xbox_dx {
 		bool status = LiWaitForNextVideoFrame(&frameHandle, &decodeUnit);
 		if (status == false)return false;
 		int n = LiGetPendingVideoFrames();
-		if (decodeUnit->fullLength > DECODER_BUFFER_SIZE) {
-			Utils::Log("(0) Decoder Buffer Size reached\n");
+		GAMING_DEVICE_MODEL_INFORMATION info = {};
+		GetGamingDeviceModelInformation(&info);
+		bool isXboxSeriesX = (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+			(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X_DEVKIT ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S ||
+			 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S_DEVKIT));
+		// Use same buffer size calculation as Init
+		size_t buffer_multiplier = 2;
+		if (isXboxSeriesX) {
+			if (width >= 3840 || height >= 2160) {
+				buffer_multiplier = 4;
+			} else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+				buffer_multiplier = 3;
+			}
+		}
+		size_t max_buffer_size = isXboxSeriesX ? (DECODER_BUFFER_SIZE * buffer_multiplier) : DECODER_BUFFER_SIZE;
+		
+		if (decodeUnit->fullLength > max_buffer_size) {
+			Utils::Log("Decoder Buffer Size reached\n");
 			LiCompleteVideoFrame(frameHandle, DR_NEED_IDR);
 			return false;
 		}
@@ -271,12 +343,28 @@ namespace moonlight_xbox_dx {
 		}
 		if (err == 0) {
 			this->resources->GetStats()->SubmitDecodeMs((double)(av_gettime_relative() - decodeStartTime) / 1000.0);
-			//Smooth stream but keep queue small
-			if (LiGetPendingVideoFrames() > 1)return nullptr;
-			//Not the best way to handle this. BUT IT DOES FIX XBOX ONES!!!!
-			//Honestly this did take too much time of my life to care to make a better version
-			//If you want to fix this, have fun! (And hopefully you have Microsoft blessing/tools/support for that)
-			if (hackWait && LiGetPendingVideoFrames() < 2)moonlight_xbox_dx::usleep(12000);
+			
+			GAMING_DEVICE_MODEL_INFORMATION info = {};
+			GetGamingDeviceModelInformation(&info);
+			bool isXboxSeriesX = (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+				(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X ||
+				 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X_DEVKIT ||
+				 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S ||
+				 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S_DEVKIT));
+
+			if (isXboxSeriesX) {
+				// Adjust frame queue based on resolution and codec
+				int max_pending_frames = 3;
+				if (width >= 3840 || height >= 2160) {
+					max_pending_frames = 2;  // Reduce for 4K to save memory
+				} else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+					max_pending_frames = 4;  // AV1 can handle more pending frames
+				}
+				if (LiGetPendingVideoFrames() > max_pending_frames) return nullptr;
+			} else {
+				if (LiGetPendingVideoFrames() > 1) return nullptr;
+				if (hackWait && LiGetPendingVideoFrames() < 2) moonlight_xbox_dx::usleep(12000);
+			}
 			AVFrame* frame = dec_frames[next_frame];
 			return frame;
 		}
@@ -325,7 +413,7 @@ namespace moonlight_xbox_dx {
 		decoder_callbacks_sdl.stop = stopCallback;
 		decoder_callbacks_sdl.cleanup = cleanupCallback;
 		decoder_callbacks_sdl.submitDecodeUnit = NULL;
-		decoder_callbacks_sdl.capabilities = CAPABILITY_PULL_RENDERER | CAPABILITY_INTRA_REFRESH;
+		decoder_callbacks_sdl.capabilities = CAPABILITY_PULL_RENDERER | CAPABILITY_INTRA_REFRESH | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
 		return decoder_callbacks_sdl;
 	}
 

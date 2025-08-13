@@ -32,6 +32,9 @@ A port of [Moonlight Stream](https://moonlight-stream.org/) for playing games us
 - Connection and Pairing
 - Application List fetching
 - Video Streaming (configurable on a host-basis in the settings)
+  - H.264 codec support (all Xbox models)
+  - H.265/HEVC codec support (Xbox Series S/X only)
+  - **AV1 codec support (Xbox Series S/X only) - NEW!**
 - Gamepad Input (with Rumble and a mouse mode to move the pointer using the gamepad)
 - Keyboard (both on-screen and using an Hardware one)
 - Graceful Disconnection

@@ -81,7 +81,8 @@ VideoRenderer::VideoRenderer(const std::shared_ptr<DX::DeviceResources>& deviceR
 	m_loadingComplete(false),
 	m_deviceResources(deviceResources),
 	client(mclient),
-	configuration(sConfig)
+	configuration(sConfig),
+	m_lastTextureFormat(DXGI_FORMAT_UNKNOWN)
 {
 	ZeroMemory(&m_lastHdr10, sizeof(DXGI_HDR_METADATA_HDR10));
 	CreateDeviceDependentResources();
@@ -103,120 +104,145 @@ bool renderedOneFrame = false;
 // Renders one frame using the vertex and pixel shaders.
 bool VideoRenderer::Render()
 {
-	// Loading is asynchronous. Only draw geometry after it's loaded.
-	if (!m_loadingComplete)
-	{
+	if (!m_loadingComplete) {
 		return true;
 	}
-	//Create a rendering texture
+
 	LARGE_INTEGER start;
 	QueryPerformanceCounter(&start);
-	FFMpegDecoder::getInstance()->shouldUnlock = false;
-	if (!FFMpegDecoder::getInstance()->SubmitDU()) {
+	
+	auto decoder = FFMpegDecoder::getInstance();
+	decoder->shouldUnlock = false;
+	
+	if (!decoder->SubmitDU()) {
 		return false;
 	}
-	AVFrame* frame = FFMpegDecoder::getInstance()->GetFrame();
+	
+	AVFrame* frame = decoder->GetFrame();
 	if (frame == nullptr) {
 		return false;
 	}
-	Microsoft::WRL::ComPtr<ID3D11Texture2D> renderTexture;
-	D3D11_BOX box;
+
+	if (frame->format != AV_PIX_FMT_D3D11) {
+		Utils::Logf("Pixel format mismatch - got %d instead of D3D11!\n", frame->format);
+		return false;
+	}
+
+	decoder->mutex.lock();
+	decoder->shouldUnlock = true;
+	
+	ID3D11Texture2D* ffmpegTexture = (ID3D11Texture2D*)(frame->data[0]);
+	D3D11_TEXTURE2D_DESC ffmpegDesc;
+	ffmpegTexture->GetDesc(&ffmpegDesc);
+	int index = (int)(frame->data[1]);
+
+	bool needsTextureRecreation = (!m_renderTexture ||
+		m_lastTextureFormat != ffmpegDesc.Format ||
+		renderTextureDesc.Width != ffmpegDesc.Width ||
+		renderTextureDesc.Height != ffmpegDesc.Height);
+
+	if (needsTextureRecreation) {
+		m_renderTexture.Reset();
+		m_luminanceSRV.Reset();
+		m_chrominanceSRV.Reset();
+		
+		renderTextureDesc.Width = ffmpegDesc.Width;
+		renderTextureDesc.Height = ffmpegDesc.Height;
+		renderTextureDesc.Format = ffmpegDesc.Format;
+		renderTextureDesc.ArraySize = 1;
+		renderTextureDesc.Usage = D3D11_USAGE_DEFAULT;
+		renderTextureDesc.MipLevels = 1;
+		renderTextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		renderTextureDesc.SampleDesc.Quality = 0;
+		renderTextureDesc.SampleDesc.Count = 1;
+		renderTextureDesc.CPUAccessFlags = 0;
+		renderTextureDesc.MiscFlags = 0;
+		
+		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(
+			&renderTextureDesc, nullptr, m_renderTexture.GetAddressOf()), "Render Texture Creation");
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC luminanceDesc = CD3D11_SHADER_RESOURCE_VIEW_DESC(
+			m_renderTexture.Get(),
+			D3D11_SRV_DIMENSION_TEXTURE2D,
+			(ffmpegDesc.Format == DXGI_FORMAT_P010) ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM);
+		
+		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateShaderResourceView(
+			m_renderTexture.Get(), &luminanceDesc, m_luminanceSRV.GetAddressOf()), "Luminance SRV Creation");
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC chrominanceDesc = CD3D11_SHADER_RESOURCE_VIEW_DESC(
+			m_renderTexture.Get(),
+			D3D11_SRV_DIMENSION_TEXTURE2D,
+			(ffmpegDesc.Format == DXGI_FORMAT_P010) ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM);
+		
+		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateShaderResourceView(
+			m_renderTexture.Get(), &chrominanceDesc, m_chrominanceSRV.GetAddressOf()), "Chrominance SRV Creation");
+
+		m_lastTextureFormat = ffmpegDesc.Format;
+	}
+
+	D3D11_BOX box = {};
 	box.left = 0;
 	box.top = 0;
-	box.right = renderTextureDesc.Width;
-	box.bottom = renderTextureDesc.Height;
+	box.right = std::min(renderTextureDesc.Width, ffmpegDesc.Width);
+	box.bottom = std::min(renderTextureDesc.Height, ffmpegDesc.Height);
 	box.front = 0;
 	box.back = 1;
-	if (frame->format != AV_PIX_FMT_D3D11) {
-		char msg[2048];
-		sprintf_s(msg, "Pixel format mismatch - got %d instead of D3D11!\n", frame->format);
-		Utils::Log(msg);
-		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(&renderTextureDesc, NULL, renderTexture.GetAddressOf()), "Render Texture Creation");
-	}
-	else {
-		FFMpegDecoder::getInstance()->mutex.lock();
-		FFMpegDecoder::getInstance()->shouldUnlock = true;
-		ID3D11Texture2D* ffmpegTexture = (ID3D11Texture2D*)(frame->data[0]);
-		D3D11_TEXTURE2D_DESC ffmpegDesc;
-		ffmpegTexture->GetDesc(&ffmpegDesc);
-		int index = (int)(frame->data[1]);
-		box.right = std::min(renderTextureDesc.Width, ffmpegDesc.Width);
-		box.bottom = std::min(renderTextureDesc.Height, ffmpegDesc.Height);
-		renderTextureDesc.Format = ffmpegDesc.Format;
-		DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateTexture2D(&renderTextureDesc, NULL, renderTexture.GetAddressOf()), "Render Texture Creation");
-		m_deviceResources->GetD3DDeviceContext()->CopySubresourceRegion(renderTexture.Get(), 0, 0, 0, 0, ffmpegTexture, index, &box);
-	}
 
 	auto context = m_deviceResources->GetD3DDeviceContext();
+	context->CopySubresourceRegion(
+		m_renderTexture.Get(), 0, 0, 0, 0, ffmpegTexture, index, &box);
+	
+	GAMING_DEVICE_MODEL_INFORMATION info = {};
+	GetGamingDeviceModelInformation(&info);
+	bool isXboxSeriesX = (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+		(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X ||
+		 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X_DEVKIT ||
+		 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S ||
+		 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S_DEVKIT));
+	
+	if (isXboxSeriesX) {
+		ID3D11Query* queryEvent;
+		D3D11_QUERY_DESC queryDesc = {};
+		queryDesc.Query = D3D11_QUERY_EVENT;
+		m_deviceResources->GetD3DDevice()->CreateQuery(&queryDesc, &queryEvent);
+		context->End(queryEvent);
+		context->Flush();
+		queryEvent->Release();
+	} else {
+		context->Flush();
+	}
+
 	UINT stride = sizeof(VERTEX);
 	UINT offset = 0;
-	context->IASetIndexBuffer(m_indexBuffer.Get(),
-		DXGI_FORMAT_R32_UINT,
-		0);
-	context->IASetVertexBuffers(
-		0,
-		1,
-		m_vertexBuffer.GetAddressOf(),
-		&stride,
-		&offset
-	);
+	
+	context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+	context->IASetVertexBuffers(0, 1, m_vertexBuffer.GetAddressOf(), &stride, &offset);
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	context->IASetInputLayout(m_inputLayout.Get());
-	// Attach our vertex shader.
 	context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
 
-	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_luminance_shader_resource_view;
-	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_chrominance_shader_resource_view;
-	D3D11_SHADER_RESOURCE_VIEW_DESC luminance_desc = CD3D11_SHADER_RESOURCE_VIEW_DESC(
-		renderTexture.Get(),
-		D3D11_SRV_DIMENSION_TEXTURE2D,
-		(renderTextureDesc.Format == DXGI_FORMAT_P010) ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM
-	);
-	DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateShaderResourceView(
-		renderTexture.Get(), &luminance_desc, m_luminance_shader_resource_view.GetAddressOf()), "Luminance SRV Creation"
-	);
+	context->PSSetShaderResources(0, 1, m_luminanceSRV.GetAddressOf());
+	context->PSSetShaderResources(1, 1, m_chrominanceSRV.GetAddressOf());
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC chrominance_desc = CD3D11_SHADER_RESOURCE_VIEW_DESC(
-		renderTexture.Get(),
-		D3D11_SRV_DIMENSION_TEXTURE2D,
-		(renderTextureDesc.Format == DXGI_FORMAT_P010) ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM
-	);
-	DX::ThrowIfFailed(m_deviceResources->GetD3DDevice()->CreateShaderResourceView(
-		renderTexture.Get(), &chrominance_desc, m_chrominance_shader_resource_view.GetAddressOf()), "Chrominance SRV Creation"
-	);
-	m_deviceResources->GetD3DDeviceContext()->PSSetShaderResources(0, 1, m_luminance_shader_resource_view.GetAddressOf());
-	m_deviceResources->GetD3DDeviceContext()->PSSetShaderResources(1, 1, m_chrominance_shader_resource_view.GetAddressOf());
-
-	this->bindColorConversion(frame);
-
-	m_deviceResources->GetD3DDeviceContext()->DrawIndexed(6, 0, 0);
+	bindColorConversion(frame);
+	context->DrawIndexed(6, 0, 0);
 
 	if (frame->color_trc != m_LastColorTrc) {
-		DXGI_COLOR_SPACE_TYPE colorspace = {};
-
-        if (frame->color_trc == AVCOL_TRC_SMPTE2084) {
-            // Switch to Rec 2020 PQ (SMPTE ST 2084) colorspace for HDR10 rendering
-			colorspace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
-        }
-        else {
-            // Restore default sRGB colorspace
-			colorspace = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
-        }
+		DXGI_COLOR_SPACE_TYPE colorspace = (frame->color_trc == AVCOL_TRC_SMPTE2084) ?
+			DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 :
+			DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
 
 		UINT colorSpaceSupport = 0;
-		if (colorspace
-			&& SUCCEEDED(m_deviceResources->GetSwapChain()->CheckColorSpaceSupport(colorspace, &colorSpaceSupport))
-			&& (colorSpaceSupport & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT))
-		{
+		if (SUCCEEDED(m_deviceResources->GetSwapChain()->CheckColorSpaceSupport(colorspace, &colorSpaceSupport))
+			&& (colorSpaceSupport & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)) {
+			
 			DX::ThrowIfFailed(m_deviceResources->GetSwapChain()->SetColorSpace1(colorspace));
 			Utils::Logf("Colorspace changed to %s\n",
-				colorspace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
-				? "DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020"
-				: "DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709");
+				colorspace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 ?
+				"HDR10 (Rec 2020)" : "SDR (Rec 709)");
 		}
-
-        m_LastColorTrc = frame->color_trc;
-    }
+		m_LastColorTrc = frame->color_trc;
+	}
 
 	return true;
 }
@@ -361,11 +387,11 @@ void VideoRenderer::CreateDeviceDependentResources()
 	ZeroMemory(&rasterizerState, sizeof(D3D11_RASTERIZER_DESC));
 
 	rasterizerState.AntialiasedLineEnable = false;
-	rasterizerState.CullMode = D3D11_CULL_NONE; // D3D11_CULL_FRONT or D3D11_CULL_NONE D3D11_CULL_BACK
-	rasterizerState.FillMode = D3D11_FILL_SOLID; // D3D11_FILL_SOLID  D3D11_FILL_WIREFRAME
+	rasterizerState.CullMode = D3D11_CULL_BACK;
+	rasterizerState.FillMode = D3D11_FILL_SOLID;
 	rasterizerState.DepthBias = 0;
 	rasterizerState.DepthBiasClamp = 0.0f;
-	rasterizerState.DepthClipEnable = true;
+	rasterizerState.DepthClipEnable = false;
 	rasterizerState.FrontCounterClockwise = false;
 	rasterizerState.MultisampleEnable = false;
 	rasterizerState.ScissorEnable = false;
@@ -376,12 +402,20 @@ void VideoRenderer::CreateDeviceDependentResources()
 	m_deviceResources->GetD3DDeviceContext()->RSSetState(m_pRasterState);
 
 	D3D11_SAMPLER_DESC samplerDesc;
-	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+	GAMING_DEVICE_MODEL_INFORMATION info = {};
+	GetGamingDeviceModelInformation(&info);
+	bool isXboxSeriesX = (info.vendorId == GAMING_DEVICE_VENDOR_ID_MICROSOFT &&
+		(info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X ||
+		 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_X_DEVKIT ||
+		 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S ||
+		 info.deviceId == GAMING_DEVICE_DEVICE_ID_XBOX_SERIES_S_DEVKIT));
+	
+	samplerDesc.Filter = isXboxSeriesX ? D3D11_FILTER_MIN_MAG_MIP_LINEAR : D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
 	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
 	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
 	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 	samplerDesc.MipLODBias = 0.0f;
-	samplerDesc.MaxAnisotropy = 1;
+	samplerDesc.MaxAnisotropy = isXboxSeriesX ? 4 : 1;
 	samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
 	samplerDesc.MinLOD = -FLT_MAX;
 	samplerDesc.MaxLOD = FLT_MAX;
@@ -445,6 +479,10 @@ void VideoRenderer::ReleaseDeviceDependentResources()
 	m_constantBuffer.Reset();
 	m_vertexBuffer.Reset();
 	m_indexBuffer.Reset();
+	m_renderTexture.Reset();
+	m_luminanceSRV.Reset();
+	m_chrominanceSRV.Reset();
+	m_lastTextureFormat = DXGI_FORMAT_UNKNOWN;
 }
 
 void VideoRenderer::scaleSourceToDestinationSurface(IRECT* src, IRECT* dst)
